@@ -1,10 +1,11 @@
 import WebSocket, { WebSocketServer } from "ws";
 import { ClientConnection } from "./Client";
-import { parseIncomingMessage } from "../network/Encoder";
+import { parseIncomingMessage, isMessageType } from "../network/Encoder";
 import { MessageType } from "../network/MessageTypes";
-import { NetworkMessage } from "../network/Protocol";
+import { NetworkMessage, CreateRoomMessage, JoinRoomMessage } from "../network/Protocol";
 import { createUniqueId } from "../utils/id";
 import { logger } from "../utils/logger";
+import { RoomManager } from "./RoomManager";
 
 // Heartbeat config
 const HEARTBEAT_INTERVAL_MS = 5000;
@@ -12,6 +13,7 @@ const CLIENT_TIMEOUT_MS = 15000;
 
 export class LanForgeServer {
   private websocketServer!: WebSocketServer;
+  private roomManager = new RoomManager();
 
   // Stores all connected clients
   private connectedClients = new Map<string, ClientConnection>();
@@ -32,6 +34,7 @@ export class LanForgeServer {
       });
 
       socket.on("close", () => {
+        this.roomManager.removeClient(clientId);
         this.connectedClients.delete(clientId);
         logger.info(`Client removed: ${clientId}`);
       });
@@ -63,15 +66,76 @@ export class LanForgeServer {
         break;
 
       case MessageType.PONG:
-        // Client responded to heartbeat
         break;
 
       case MessageType.ECHO:
         this.broadcastMessage(message, client.clientId);
         break;
 
+      case MessageType.CREATE_ROOM:
+        if (isMessageType<CreateRoomMessage>(message, MessageType.CREATE_ROOM)) {
+          const roomName = message.payload.roomName || `Room-${createUniqueId()}`;
+          const room = this.roomManager.createRoom(roomName, client.clientId, message.payload.maxPlayers);
+          this.sendMessage(client, {
+            type: MessageType.ROOM_STATE,
+            requestId: message.requestId,
+            clientId: "server",
+            payload: {
+              roomId: room.id,
+              players: room.clients,
+              hostId: room.hostId
+            }
+          });
+        }
+        break;
+
+      case MessageType.JOIN_ROOM:
+        if (isMessageType<JoinRoomMessage>(message, MessageType.JOIN_ROOM)) {
+          const room = this.roomManager.joinRoom(message.payload.roomId, client.clientId);
+          if (room) {
+            // Notify joiner
+            this.sendMessage(client, {
+              type: MessageType.ROOM_STATE,
+              requestId: message.requestId,
+              clientId: "server",
+              payload: {
+                roomId: room.id,
+                players: room.clients,
+                hostId: room.hostId
+              }
+            });
+            // Notify others
+            this.broadcastToRoom(room.id, {
+              type: MessageType.ROOM_STATE,
+              requestId: createUniqueId("update-"),
+              clientId: "server",
+              payload: {
+                roomId: room.id,
+                players: room.clients,
+                hostId: room.hostId
+              }
+            });
+          } else {
+            this.sendErrorMessage(client, "Failed to join room (Full or invalid ID)");
+          }
+        }
+        break;
+
       default:
         this.sendErrorMessage(client, "Unsupported message type");
+    }
+  }
+
+  // Helper to broadcast to a specific room
+  private broadcastToRoom(roomId: string, message: NetworkMessage) {
+    const room = this.roomManager.getRoom(roomId);
+    if (room) {
+      for (const clientId of room.clients) {
+        const client = this.connectedClients.get(clientId);
+        if (client) {
+          client.sendMessage(message);
+        }
+      }
     }
   }
 
