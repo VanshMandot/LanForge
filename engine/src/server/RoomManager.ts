@@ -1,7 +1,7 @@
 import { ClientConnection } from "./Client";
 import { createUniqueId } from "../utils/id";
 import { logger } from "../utils/logger";
-
+const DISCONNECT_BUFFER_MS = 10_000; // 10 seconds buffer
 export interface Room {
     id: string;
     name: string;
@@ -12,6 +12,7 @@ export interface Room {
 
 export class RoomManager {
     private rooms = new Map<string, Room>();
+    private disconnectBuffer = new Map<string, number>();
 
     createRoom(name: string, hostId: string, maxPlayers: number = 4): Room {
         const roomId = createUniqueId("room-");
@@ -52,6 +53,27 @@ export class RoomManager {
     getRoom(roomId: string): Room | undefined {
         return this.rooms.get(roomId);
     }
+    markClientInactive(clientId: string) {
+    // If already marked inactive, do nothing
+    if (this.disconnectBuffer.has(clientId)) return;
+
+    this.disconnectBuffer.set(clientId, Date.now());
+    logger.warn(`Client ${clientId} entered disconnect buffer`);
+
+    
+}
+    checkBufferedDisconnects() {
+    const now = Date.now();
+
+    for (const [clientId, inactiveSince] of this.disconnectBuffer.entries()) {
+        if (now - inactiveSince >= DISCONNECT_BUFFER_MS) {
+            logger.warn(`Client ${clientId} removed after disconnect buffer`);
+            this.removeClient(clientId);
+            this.disconnectBuffer.delete(clientId);
+        }
+    }
+}
+
 
     removeClient(clientId: string) {
         // Remove client from all rooms (usually just one)

@@ -16,18 +16,36 @@ export class ClientConnection {
   sendMessage(message: NetworkMessage) {
     if (this.socket.readyState === WebSocket.OPEN) {
       this.socket.send(serializeMessage(message));
+
+      logger.info(
+        `Sent ${message.type} to client ${this.clientId}`,
+        { requestId: message.requestId }
+      );
+    } else {
+      logger.warn(
+        `Cannot send message, socket not open`,
+        { clientId: this.clientId, type: message.type }
+      );
     }
   }
 
-  // Update last activity timestamp
+  // Call this when a valid message is received from the client
+  // (for example: PONG, GAME_ACTION, JOIN_ROOM, etc.)
   updateLastSeen() {
     this.lastActiveTime = Date.now();
   }
 
   // Disconnect client safely
   closeConnection(reason: string) {
+    // If already disconnected, do nothing
+    if (!this.isConnected) return;
+
     logger.warn(`Client ${this.clientId} disconnected: ${reason}`);
     this.isConnected = false;
-    this.socket.close();
+
+    // Close socket only if it is still open
+    if (this.socket.readyState === WebSocket.OPEN) {
+      this.socket.close();
+    }
   }
 }
