@@ -13,7 +13,6 @@ export class ClientConnection {
     private readonly socket: WebSocket
   ) {}
 
-  // Send message to this client
   sendMessage(message: NetworkMessage) {
     if (this.socket.readyState === WebSocket.OPEN) {
       this.socket.send(serializeMessage(message));
