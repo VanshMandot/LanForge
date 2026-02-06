@@ -27,6 +27,21 @@ export interface ErrorMessage extends BaseMessage {
     payload: { reason: string; code?: number };
 }
 
+export interface WelcomeMessage extends BaseMessage {
+    type: MessageType.WELCOME;
+    payload: {
+        sessionId: string;
+        clientId: string;
+    };
+}
+
+export interface ReconnectMessage extends BaseMessage {
+    type: MessageType.RECONNECT;
+    payload: {
+        sessionId: string;
+    };
+}
+
 // --- Room Messages ---
 export interface CreateRoomMessage extends BaseMessage {
     type: MessageType.CREATE_ROOM;
@@ -56,6 +71,80 @@ export interface RoomStateMessage extends BaseMessage {
         roomId: string;
         players: string[]; // List of clientIds
         hostId: string;
+    };
+}
+
+export interface ListRoomsMessage extends BaseMessage {
+    type: MessageType.LIST_ROOMS;
+    payload: {};
+}
+
+export interface RoomListMessage extends BaseMessage {
+    type: MessageType.ROOM_LIST;
+    payload: {
+        rooms: {
+            id: string;
+            name: string;
+            currentPlayers: number;
+            maxPlayers: number;
+        }[];
+    };
+}
+
+export interface UpdateRoomSettingsMessage extends BaseMessage {
+    type: MessageType.UPDATE_ROOM_SETTINGS;
+    payload: {
+        roomId: string;
+        settings: {
+            maxPlayers?: number;
+            mapId?: string;
+            mode?: string;
+        };
+    };
+}
+
+export interface KickPlayerMessage extends BaseMessage {
+    type: MessageType.KICK_PLAYER;
+    payload: {
+        roomId: string;
+        targetClientId: string;
+        reason?: string;
+    };
+}
+
+export interface PlayerReadyMessage extends BaseMessage {
+    type: MessageType.PLAYER_READY;
+    payload: {
+        roomId: string;
+        isReady: boolean;
+    };
+}
+
+export interface RoomEventMessage extends BaseMessage {
+    type: MessageType.ROOM_EVENT;
+    payload: {
+        eventType: "JOIN" | "LEAVE" | "KICK" | "READY" | "SETTINGS";
+        message: string;
+        timestamp: number;
+    };
+}
+
+// --- Chat Messages ---
+export interface ChatMessage extends BaseMessage {
+    type: MessageType.CHAT_MESSAGE;
+    payload: {
+        senderId?: string;
+        text: string;
+        timestamp: number;
+    };
+}
+
+export interface QuickChatMessage extends BaseMessage {
+    type: MessageType.QUICK_CHAT;
+    payload: {
+        senderId?: string;
+        messageId: string; // e.g. "GG", "HELLO", "READY"
+        timestamp: number;
     };
 }
 
@@ -92,6 +181,16 @@ export type NetworkMessage =
     | JoinRoomMessage
     | LeaveRoomMessage
     | RoomStateMessage
+    | ListRoomsMessage
+    | RoomListMessage
+    | UpdateRoomSettingsMessage
+    | KickPlayerMessage
+    | PlayerReadyMessage
+    | RoomEventMessage
+    | ChatMessage
+    | QuickChatMessage
+    | WelcomeMessage
+    | ReconnectMessage
     | GameStartMessage
     | GameActionMessage
     | GameUpdateMessage;
