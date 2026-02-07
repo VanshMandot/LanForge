@@ -1,14 +1,17 @@
+// Will create this and upload once your work is done...
+// FOr now you all create your own tests and run
+
 import WebSocket from "ws";
-import { LanForgeServer } from "./server/Server";
-import { MessageType } from "./network/MessageTypes";
-import { NetworkMessage } from "./network/Protocol";
-import { parseIncomingMessage, serializeMessage } from "./network/Encoder";
-import { createUniqueId } from "./utils/id";
+import { LanForgeServer } from "../server/Server";
+import { MessageType } from "../network/MessageTypes";
+import { NetworkMessage } from "../network/Protocol";
+import { decodeMessage, serializeMessage } from "../network/Encoder";
+import { createUniqueId } from "../utils/id";
 
 const PORT = 8080;
 const server = new LanForgeServer();
 
-// Start the server
+// // Start the server
 console.log("Starting server...");
 server.start(PORT);
 
@@ -53,7 +56,7 @@ setTimeout(() => {
     });
 
     ws.on("message", (data: any) => {
-        const msg = parseIncomingMessage(data.toString());
+        const msg = decodeMessage(data.toString());
         console.log("Received:", msg);
 
         if (msg?.type === MessageType.PONG) {

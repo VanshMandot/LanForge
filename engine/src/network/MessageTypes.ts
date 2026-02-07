@@ -1,4 +1,7 @@
 export enum MessageType {
+    HELLO = "HELLO",
+    WELCOME = "WELCOME",
+
     PING = "PING",
     PONG = "PONG",
     ECHO = "ECHO",

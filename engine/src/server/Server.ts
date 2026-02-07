@@ -1,8 +1,8 @@
 import WebSocket, { WebSocketServer } from "ws";
 import { ClientConnection } from "./Client";
-import { parseIncomingMessage, isMessageType } from "../network/Encoder";
+import { decodeMessage, isMessageType } from "../network/Encoder";
 import { MessageType } from "../network/MessageTypes";
-import { NetworkMessage, CreateRoomMessage, JoinRoomMessage } from "../network/Protocol";
+import { HelloMessage, NetworkMessage, CreateRoomMessage, JoinRoomMessage } from "../network/Protocol";
 import { createUniqueId } from "../utils/id";
 import { logger } from "../utils/logger";
 import { RoomManager } from "./RoomManager";
@@ -10,6 +10,8 @@ import { RoomManager } from "./RoomManager";
 // Heartbeat config
 const HEARTBEAT_INTERVAL_MS = 5000;
 const CLIENT_TIMEOUT_MS = 15000;
+const SERVER_ID = "server";
+
 
 export class LanForgeServer {
   private websocketServer!: WebSocketServer;
@@ -46,21 +48,20 @@ export class LanForgeServer {
 
   // Handle messages received from clients
   private handleIncomingMessage(client: ClientConnection, rawData: string) {
-    const message = parseIncomingMessage(rawData);
-
-    if (!message) {
-      this.sendErrorMessage(client, "Invalid message format");
+    const result = decodeMessage(rawData);
+    if (!result.ok) {
+      this.sendErrorMessage(client, result.error);
       return;
     }
-
     client.updateLastSeen();
+    const message = result.message;
 
     switch (message.type) {
       case MessageType.PING:
         this.sendMessage(client, {
           type: MessageType.PONG,
           requestId: message.requestId,
-          clientId: "server",
+          clientId: SERVER_ID,
           payload: { timestamp: Date.now() },
         });
         break;
@@ -69,7 +70,11 @@ export class LanForgeServer {
         break;
 
       case MessageType.ECHO:
-        this.broadcastMessage(message, client.clientId);
+        const safeMsg = {
+          ...message,
+          clientId: client.clientId,
+        };
+        this.broadcastMessage(safeMsg, client.clientId);
         break;
 
       case MessageType.CREATE_ROOM:
@@ -79,7 +84,7 @@ export class LanForgeServer {
           this.sendMessage(client, {
             type: MessageType.ROOM_STATE,
             requestId: message.requestId,
-            clientId: "server",
+            clientId: SERVER_ID,
             payload: {
               roomId: room.id,
               players: room.clients,
@@ -97,7 +102,7 @@ export class LanForgeServer {
             this.sendMessage(client, {
               type: MessageType.ROOM_STATE,
               requestId: message.requestId,
-              clientId: "server",
+              clientId: SERVER_ID,
               payload: {
                 roomId: room.id,
                 players: room.clients,
@@ -108,7 +113,7 @@ export class LanForgeServer {
             this.broadcastToRoom(room.id, {
               type: MessageType.ROOM_STATE,
               requestId: createUniqueId("update-"),
-              clientId: "server",
+              clientId: SERVER_ID,
               payload: {
                 roomId: room.id,
                 players: room.clients,
@@ -118,6 +123,25 @@ export class LanForgeServer {
           } else {
             this.sendErrorMessage(client, "Failed to join room (Full or invalid ID)");
           }
+        }
+        break;
+      
+      case MessageType.HELLO:
+        if (isMessageType<HelloMessage>(message, MessageType.HELLO)) {
+          const { deviceId, clientName } = message.payload;
+
+          // Store deviceId on client
+          client.deviceId = deviceId;
+
+          logger.info(`Client ${client.clientId} identified as device ${deviceId}`);
+
+          // Reply with WELCOME
+          this.sendMessage(client, {
+            type: MessageType.WELCOME,
+            requestId: message.requestId,
+            clientId: SERVER_ID,
+            payload: { clientId: client.clientId },
+          });
         }
         break;
 
@@ -133,7 +157,10 @@ export class LanForgeServer {
       for (const clientId of room.clients) {
         const client = this.connectedClients.get(clientId);
         if (client) {
-          client.sendMessage(message);
+          client.sendMessage({
+            ...message,
+            clientId: SERVER_ID, 
+          });
         }
       }
     }
@@ -158,7 +185,7 @@ export class LanForgeServer {
     this.sendMessage(client, {
       type: MessageType.ERROR,
       requestId: createUniqueId("error-"),
-      clientId: "server",
+      clientId: SERVER_ID,
       payload: { reason },
     });
   }
@@ -173,13 +200,14 @@ export class LanForgeServer {
 
         if (timeSinceLastSeen > CLIENT_TIMEOUT_MS) {
           client.closeConnection("Heartbeat timeout");
+          this.roomManager.removeClient(clientId);
           this.connectedClients.delete(clientId);
         } else {
           client.sendMessage({
             type: MessageType.PING,
             requestId: createUniqueId("ping-"),
-            clientId: "server",
-            payload: {},
+            clientId: SERVER_ID,
+            payload: { timestamp: Date.now() },
           });
         }
       }

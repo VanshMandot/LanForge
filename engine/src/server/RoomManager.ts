@@ -2,6 +2,7 @@ import { ClientConnection } from "./Client";
 import { createUniqueId } from "../utils/id";
 import { logger } from "../utils/logger";
 const DISCONNECT_BUFFER_MS = 10_000; // 10 seconds buffer
+
 export interface Room {
     id: string;
     name: string;

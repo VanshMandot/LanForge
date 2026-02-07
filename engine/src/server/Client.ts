@@ -7,6 +7,7 @@ import { logger } from "../utils/logger";
 export class ClientConnection {
   public lastActiveTime: number = Date.now();
   public isConnected: boolean = true;
+  public deviceId?: string;
 
   constructor(
     public readonly clientId: string,
@@ -15,12 +16,12 @@ export class ClientConnection {
 
   sendMessage(message: NetworkMessage) {
     if (this.socket.readyState === WebSocket.OPEN) {
-      this.socket.send(serializeMessage(message));
-
-      logger.info(
-        `Sent ${message.type} to client ${this.clientId}`,
-        { requestId: message.requestId }
-      );
+      const data = serializeMessage(message);
+      if (!data) {
+        logger.error("Serialization failed", { clientId: this.clientId, type: message.type });
+        return;
+      }
+      this.socket.send(data);
     } else {
       logger.warn(
         `Cannot send message, socket not open`,
@@ -45,7 +46,7 @@ export class ClientConnection {
 
     // Close socket only if it is still open
     if (this.socket.readyState === WebSocket.OPEN) {
-      this.socket.close();
+      this.socket.terminate();
     }
   }
 }

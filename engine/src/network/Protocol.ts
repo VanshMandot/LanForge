@@ -3,13 +3,23 @@ import { MessageType } from "./MessageTypes";
 export interface BaseMessage {
     type: MessageType;
     requestId: string;
-    clientId: string;
+    clientId?: string;
+}
+
+export interface HelloMessage extends BaseMessage {
+  type: MessageType.HELLO;
+  payload: { deviceId: string; clientName?: string };
+}
+
+export interface WelcomeMessage extends BaseMessage {
+  type: MessageType.WELCOME;
+  payload: { clientId: string };
 }
 
 // --- Connection Messages ---
 export interface PingMessage extends BaseMessage {
     type: MessageType.PING;
-    payload: {};
+    payload: { timestamp: number };
 }
 
 export interface PongMessage extends BaseMessage {
@@ -64,7 +74,7 @@ export interface GameStartMessage extends BaseMessage {
     type: MessageType.GAME_START;
     payload: {
         gameId: string;
-        initialState: any;
+        initialState: unknown;
     };
 }
 
@@ -72,18 +82,20 @@ export interface GameActionMessage extends BaseMessage {
     type: MessageType.GAME_ACTION;
     payload: {
         actionType: string;
-        data: any;
+        data: unknown;
     };
 }
 
 export interface GameUpdateMessage extends BaseMessage {
     type: MessageType.GAME_UPDATE;
     payload: {
-        stateDelta: any; // Could be a full state or a diff
+        stateDelta: unknown; // Could be a full state or a diff
     };
 }
 
 export type NetworkMessage =
+    | HelloMessage
+    | WelcomeMessage
     | PingMessage
     | PongMessage
     | EchoMessage
