@@ -264,4 +264,12 @@ export class RoomManager {
   getRoom(roomId: string): Room | undefined {
     return this.rooms.get(roomId);
   }
+
+  restoreRoomFromSnapshot(room: Room): void {
+  // Insert restored room into internal map
+  this.rooms.set(room.roomId, room);
+
+  // Restore joinCode lookup mapping
+  this.joinCodeToRoomId.set(room.joinCode, room.roomId);
+}
 }
