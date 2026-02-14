@@ -145,7 +145,24 @@ export class LanForgeServer {
             this.sendErrorMessage(client, "Not in a room");
             break;
           }
-          this.roomManager.appendChat(room.roomId, client.deviceId, message.payload.text);
+
+          // Store the chat message
+          const chatMessage = this.roomManager.appendChat(room.roomId, client.deviceId, message.payload.text);
+
+          // Broadcast the CHAT message to all room members for real-time display
+          this.broadcastToRoom(room.roomId, {
+            type: MessageType.CHAT,
+            requestId: createUniqueId("chat-"),
+            clientId: "server",
+            payload: {
+              fromDeviceId: chatMessage.fromDeviceId,
+              fromName: chatMessage.fromName,
+              text: chatMessage.text,
+              timestamp: chatMessage.timestamp
+            }
+          });
+
+          // Also update the room state snapshot
           this.broadcastRoomState(room.roomId);
         }
         break;
