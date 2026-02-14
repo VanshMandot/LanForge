@@ -7,6 +7,7 @@ export interface DiscoveredHost {
     ip: string;
     port: number;
     roomId: string;
+    joinCode: string;
     hostId: string;
     lastSeen: number;
 }
@@ -40,10 +41,11 @@ export function startDiscovery(
         // Expected format: LANFORGE_HOST <roomId> <hostId> <port>
         const parts = text.split(" ");
 
-        if (parts[0] === "LANFORGE_HOST" && parts.length >= 4) {
+        if (parts[0] === "LANFORGE_HOST" && parts.length >= 5) {
             const roomId = parts[1];
-            const hostId = parts[2];
-            const port = parseInt(parts[3], 10);
+            const joinCode = parts[2];
+            const hostId = parts[3];
+            const port = parseInt(parts[4], 10);
             const ip = rinfo.address;
 
             if (isNaN(port)) {
@@ -56,6 +58,7 @@ export function startDiscovery(
                 ip,
                 port,
                 roomId,
+                joinCode,
                 hostId,
                 lastSeen: Date.now(),
             };

@@ -1,4 +1,5 @@
 import { randomBytes } from "crypto";
+import { SnapshotState } from "../states/types";
 
 /* =========================
    Types & Interfaces
@@ -220,7 +221,7 @@ export class RoomManager {
      Helpers
   ========================= */
 
-  private findRoomByDevice(deviceId: string): Room | null {
+  public findRoomByDevice(deviceId: string): Room | null {
     for (const room of this.rooms.values()) {
       if (room.members.some(m => m.deviceId === deviceId)) {
         return room;
@@ -265,11 +266,38 @@ export class RoomManager {
     return this.rooms.get(roomId);
   }
 
-  restoreRoomFromSnapshot(room: Room): void {
-  // Insert restored room into internal map
-  this.rooms.set(room.roomId, room);
+  makeSnapshot(roomId: string): SnapshotState | null {
+    const room = this.rooms.get(roomId);
+    if (!room) return null;
 
-  // Restore joinCode lookup mapping
-  this.joinCodeToRoomId.set(room.joinCode, room.roomId);
-}
+    const deviceIdToClientId: Record<string, string> = {};
+    const deviceIdToName: Record<string, string> = {};
+
+    room.members.forEach((m) => {
+      deviceIdToClientId[m.deviceId] = m.clientId;
+      deviceIdToName[m.deviceId] = m.name;
+    });
+
+    return {
+      room: {
+        roomId: room.roomId,
+        joinCode: room.joinCode,
+        hostDeviceId: room.hostDeviceId,
+        members: room.members,
+      },
+      chat: room.chat,
+      identity: {
+        deviceIdToClientId,
+        deviceIdToName,
+      },
+    };
+  }
+
+  restoreRoomFromSnapshot(room: Room): void {
+    // Insert restored room into internal map
+    this.rooms.set(room.roomId, room);
+
+    // Restore joinCode lookup mapping
+    this.joinCodeToRoomId.set(room.joinCode, room.roomId);
+  }
 }

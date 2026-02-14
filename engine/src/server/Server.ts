@@ -2,7 +2,14 @@ import WebSocket, { WebSocketServer } from "ws";
 import { ClientConnection } from "./Client";
 import { parseIncomingMessage, isMessageType } from "../network/Encoder";
 import { MessageType } from "../network/MessageTypes";
-import { NetworkMessage, CreateRoomMessage, JoinRoomMessage } from "../network/Protocol";
+import {
+  NetworkMessage,
+  CreateRoomMessage,
+  JoinRoomMessage,
+  HelloMessage,
+  ChatMessage,
+  KickMessage,
+} from "../network/Protocol";
 import { createUniqueId } from "../utils/id";
 import { logger } from "../utils/logger";
 import { RoomManager } from "./RoomManager";
@@ -34,7 +41,12 @@ export class LanForgeServer {
       });
 
       socket.on("close", () => {
-        this.roomManager.removeClient(clientId);
+        if (client.deviceId) {
+          const room = this.roomManager.leaveRoom(client.deviceId);
+          if (room) {
+            this.broadcastRoomState(room.roomId);
+          }
+        }
         this.connectedClients.delete(clientId);
         logger.info(`Client removed: ${clientId}`);
       });
@@ -68,55 +80,90 @@ export class LanForgeServer {
       case MessageType.PONG:
         break;
 
-      case MessageType.ECHO:
-        this.broadcastMessage(message, client.clientId);
+      case MessageType.HELLO:
+        if (isMessageType<HelloMessage>(message, MessageType.HELLO)) {
+          client.deviceId = message.payload.deviceId;
+          client.name = message.payload.name;
+          logger.info(`Client ${client.clientId} identified as ${client.name} (${client.deviceId})`);
+          this.sendMessage(client, {
+            type: MessageType.WELCOME,
+            requestId: message.requestId,
+            clientId: "server",
+            payload: { clientId: client.clientId }
+          });
+        }
         break;
 
       case MessageType.CREATE_ROOM:
         if (isMessageType<CreateRoomMessage>(message, MessageType.CREATE_ROOM)) {
-          const roomName = message.payload.roomName || `Room-${createUniqueId()}`;
-          const room = this.roomManager.createRoom(roomName, client.clientId, message.payload.maxPlayers);
-          this.sendMessage(client, {
-            type: MessageType.ROOM_STATE,
-            requestId: message.requestId,
-            clientId: "server",
-            payload: {
-              roomId: room.id,
-              players: room.clients,
-              hostId: room.hostId
-            }
-          });
+          if (!client.deviceId || !client.name) {
+            this.sendErrorMessage(client, "Must send HELLO first");
+            break;
+          }
+          const roomId = createUniqueId("room-");
+          const room = this.roomManager.createRoom(
+            roomId,
+            client.deviceId,
+            client.clientId,
+            client.name
+          );
+
+          logger.info(`Room created: ${room.roomId} by ${client.name}. JoinCode: ${room.joinCode}`);
+          this.broadcastRoomState(room.roomId);
         }
         break;
 
       case MessageType.JOIN_ROOM:
         if (isMessageType<JoinRoomMessage>(message, MessageType.JOIN_ROOM)) {
-          const room = this.roomManager.joinRoom(message.payload.roomId, client.clientId);
-          if (room) {
-            // Notify joiner
-            this.sendMessage(client, {
-              type: MessageType.ROOM_STATE,
-              requestId: message.requestId,
-              clientId: "server",
-              payload: {
-                roomId: room.id,
-                players: room.clients,
-                hostId: room.hostId
-              }
-            });
-            // Notify others
-            this.broadcastToRoom(room.id, {
-              type: MessageType.ROOM_STATE,
-              requestId: createUniqueId("update-"),
-              clientId: "server",
-              payload: {
-                roomId: room.id,
-                players: room.clients,
-                hostId: room.hostId
-              }
-            });
-          } else {
-            this.sendErrorMessage(client, "Failed to join room (Full or invalid ID)");
+          if (!client.deviceId || !client.name) {
+            this.sendErrorMessage(client, "Must send HELLO first");
+            break;
+          }
+          try {
+            const room = this.roomManager.joinRoomByCode(
+              message.payload.joinCode,
+              client.deviceId,
+              client.clientId,
+              client.name
+            );
+            logger.info(`Client ${client.name} joined room ${room.roomId}`);
+            this.broadcastRoomState(room.roomId);
+          } catch (err: any) {
+            this.sendErrorMessage(client, err.message || "Failed to join room");
+          }
+        }
+        break;
+
+      case MessageType.CHAT:
+        if (isMessageType<ChatMessage>(message, MessageType.CHAT)) {
+          if (!client.deviceId) {
+            this.sendErrorMessage(client, "Must send HELLO first");
+            break;
+          }
+          const room = this.roomManager.findRoomByDevice(client.deviceId);
+          if (!room) {
+            this.sendErrorMessage(client, "Not in a room");
+            break;
+          }
+          this.roomManager.appendChat(room.roomId, client.deviceId, message.payload.text);
+          this.broadcastRoomState(room.roomId);
+        }
+        break;
+
+      case MessageType.KICK:
+        if (isMessageType<KickMessage>(message, MessageType.KICK)) {
+          if (!client.deviceId) {
+            this.sendErrorMessage(client, "Must send HELLO first");
+            break;
+          }
+          try {
+            const room = this.roomManager.kick(client.deviceId, message.payload.targetDeviceId);
+            this.broadcastRoomState(room.roomId);
+
+            // Optionally notify the kicked client
+            // This is tricky because they might still be connected but not in room members.
+          } catch (err: any) {
+            this.sendErrorMessage(client, err.message || "Failed to kick");
           }
         }
         break;
@@ -126,12 +173,35 @@ export class LanForgeServer {
     }
   }
 
+  // Helper to broadcast full room state (snapshot) to all members
+  private broadcastRoomState(roomId: string) {
+    const snapshot = this.roomManager.makeSnapshot(roomId);
+    if (!snapshot) return;
+
+    const message: NetworkMessage = {
+      type: MessageType.STATE_SNAPSHOT,
+      requestId: createUniqueId("snap-"),
+      clientId: "server",
+      payload: { snapshot }
+    };
+
+    const room = this.roomManager.getRoom(roomId);
+    if (room) {
+      for (const member of room.members) {
+        const client = this.connectedClients.get(member.clientId);
+        if (client) {
+          client.sendMessage(message);
+        }
+      }
+    }
+  }
+
   // Helper to broadcast to a specific room
   private broadcastToRoom(roomId: string, message: NetworkMessage) {
     const room = this.roomManager.getRoom(roomId);
     if (room) {
-      for (const clientId of room.clients) {
-        const client = this.connectedClients.get(clientId);
+      for (const member of room.members) {
+        const client = this.connectedClients.get(member.clientId);
         if (client) {
           client.sendMessage(message);
         }

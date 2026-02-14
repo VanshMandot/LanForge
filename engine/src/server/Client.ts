@@ -7,11 +7,13 @@ import { logger } from "../utils/logger";
 export class ClientConnection {
   public lastActiveTime: number = Date.now();
   public isConnected: boolean = true;
+  public deviceId?: string;
+  public name?: string;
 
   constructor(
     public readonly clientId: string,
     private readonly socket: WebSocket
-  ) {}
+  ) { }
 
   // Send message to this client
   sendMessage(message: NetworkMessage) {

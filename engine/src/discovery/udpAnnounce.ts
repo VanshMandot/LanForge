@@ -8,13 +8,15 @@ const ANNOUNCE_INTERVAL_MS = 3000;
 let socket: dgram.Socket | null = null;
 let intervalId: NodeJS.Timeout | null = null;
 
+
 /**
  * Starts periodic UDP announcements of the current room.
- * Payload format: LANFORGE_HOST <roomId> <hostId> <port>
+ * Payload format: LANFORGE_HOST <roomId> <joinCode> <hostId> <port>
  * Note: IP is not sent; receivers infer it from rinfo.address.
  */
 export function startAnnounce(
     roomId: string,
+    joinCode: string,
     hostId: string,
     serverPort: number
 ): void {
@@ -38,7 +40,7 @@ export function startAnnounce(
         stopAnnounce();
     });
 
-    const message = Buffer.from(`LANFORGE_HOST ${roomId} ${hostId} ${serverPort}`);
+    const message = Buffer.from(`LANFORGE_HOST ${roomId} ${joinCode} ${hostId} ${serverPort}`);
 
     intervalId = setInterval(() => {
         if (!socket) return;
