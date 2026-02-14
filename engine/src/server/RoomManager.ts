@@ -1,9 +1,7 @@
 import { randomBytes } from "crypto";
 import { SnapshotState } from "../states/types";
 
-/* =========================
-   Types & Interfaces
-========================= */
+/*Types & Interfaces*/
 
 export type Role = "host" | "member";
 
@@ -30,25 +28,19 @@ export interface Room {
   chat: ChatMessage[];
 }
 
-/* =========================
-   Constants
-========================= */
+/* Constants */
 
 const JOIN_CODE_LENGTH = 6;
 const CHAT_BUFFER_LIMIT = 50;
 
-/* =========================
-   RoomManager
-========================= */
+/* RoomManager */
 
 export class RoomManager {
   private rooms = new Map<string, Room>();
   private joinCodeToRoomId = new Map<string, string>();
   private globalJoinCounter = 0;
 
-  /* =========================
-     Room Creation
-  ========================= */
+  /* Room Creation */
 
   createRoom(
     roomId: string,
@@ -80,9 +72,7 @@ export class RoomManager {
     return room;
   }
 
-  /* =========================
-     Join Room
-  ========================= */
+  /* Join Room */
 
   joinRoomByCode(
     joinCode: string,
@@ -111,9 +101,7 @@ export class RoomManager {
     return room;
   }
 
-  /* =========================
-     Leave Room
-  ========================= */
+  /* Leave Room */
 
   leaveRoom(deviceId: string): Room | null {
     const room = this.findRoomByDevice(deviceId);
@@ -138,9 +126,7 @@ export class RoomManager {
     return room;
   }
 
-  /* =========================
-     Kick Member
-  ========================= */
+  /* Kick Member */
 
   kick(hostDeviceId: string, targetDeviceId: string): Room {
     const room = this.findRoomByDevice(hostDeviceId);
@@ -154,9 +140,7 @@ export class RoomManager {
     return room;
   }
 
-  /* =========================
-     Name Change (Strict)
-  ========================= */
+  /* Name Change (Strict) */
 
   changeName(deviceId: string, newName: string): void {
     const room = this.findRoomByDevice(deviceId);
@@ -172,9 +156,7 @@ export class RoomManager {
     member.name = newName;
   }
 
-  /* =========================
-     Chat Handling
-  ========================= */
+  /* Chat Handling */
 
   appendChat(roomId: string, fromDeviceId: string, text: string): ChatMessage {
     const room = this.rooms.get(roomId);
@@ -199,9 +181,7 @@ export class RoomManager {
     return msg;
   }
 
-  /* =========================
-     Host Election
-  ========================= */
+  /* Host Election */
 
   electNewHost(roomId: string): string {
     const room = this.rooms.get(roomId);
@@ -217,9 +197,7 @@ export class RoomManager {
     return sorted[0].deviceId;
   }
 
-  /* =========================
-     Helpers
-  ========================= */
+  /* Helpers */
 
   public findRoomByDevice(deviceId: string): Room | null {
     for (const room of this.rooms.values()) {
@@ -258,9 +236,7 @@ export class RoomManager {
     return Math.abs(hash);
   }
 
-  /* =========================
-    # Snapshot Support
-  ========================= */
+  /* Snapshot Support */
 
   getRoom(roomId: string): Room | undefined {
     return this.rooms.get(roomId);
