@@ -1,8 +1,15 @@
 import WebSocket, { WebSocketServer } from "ws";
 import { ClientConnection } from "./Client";
-import { decodeMessage, isMessageType } from "../network/Encoder";
+import { parseIncomingMessage, isMessageType } from "../network/Encoder";
 import { MessageType } from "../network/MessageTypes";
-import { HelloMessage, NetworkMessage, CreateRoomMessage, JoinRoomMessage } from "../network/Protocol";
+import {
+  NetworkMessage,
+  CreateRoomMessage,
+  JoinRoomMessage,
+  HelloMessage,
+  ChatMessage,
+  KickMessage,
+} from "../network/Protocol";
 import { createUniqueId } from "../utils/id";
 import { logger } from "../utils/logger";
 import { RoomManager } from "./RoomManager";
@@ -10,8 +17,6 @@ import { RoomManager } from "./RoomManager";
 // Heartbeat config
 const HEARTBEAT_INTERVAL_MS = 5000;
 const CLIENT_TIMEOUT_MS = 15000;
-const SERVER_ID = "server";
-
 
 export class LanForgeServer {
   private websocketServer!: WebSocketServer;
@@ -36,7 +41,12 @@ export class LanForgeServer {
       });
 
       socket.on("close", () => {
-        this.roomManager.removeClient(clientId);
+        if (client.deviceId) {
+          const room = this.roomManager.leaveRoom(client.deviceId);
+          if (room) {
+            this.broadcastRoomState(room.roomId);
+          }
+        }
         this.connectedClients.delete(clientId);
         logger.info(`Client removed: ${clientId}`);
       });
@@ -48,20 +58,21 @@ export class LanForgeServer {
 
   // Handle messages received from clients
   private handleIncomingMessage(client: ClientConnection, rawData: string) {
-    const result = decodeMessage(rawData);
-    if (!result.ok) {
-      this.sendErrorMessage(client, result.error);
+    const message = parseIncomingMessage(rawData);
+
+    if (!message) {
+      this.sendErrorMessage(client, "Invalid message format");
       return;
     }
+
     client.updateLastSeen();
-    const message = result.message;
 
     switch (message.type) {
       case MessageType.PING:
         this.sendMessage(client, {
           type: MessageType.PONG,
           requestId: message.requestId,
-          clientId: SERVER_ID,
+          clientId: "server",
           payload: { timestamp: Date.now() },
         });
         break;
@@ -69,79 +80,108 @@ export class LanForgeServer {
       case MessageType.PONG:
         break;
 
-      case MessageType.ECHO:
-        const safeMsg = {
-          ...message,
-          clientId: client.clientId,
-        };
-        this.broadcastMessage(safeMsg, client.clientId);
+      case MessageType.HELLO:
+        if (isMessageType<HelloMessage>(message, MessageType.HELLO)) {
+          client.deviceId = message.payload.deviceId;
+          client.name = message.payload.name;
+          logger.info(`Client ${client.clientId} identified as ${client.name} (${client.deviceId})`);
+          this.sendMessage(client, {
+            type: MessageType.WELCOME,
+            requestId: message.requestId,
+            clientId: "server",
+            payload: { clientId: client.clientId }
+          });
+        }
         break;
 
       case MessageType.CREATE_ROOM:
         if (isMessageType<CreateRoomMessage>(message, MessageType.CREATE_ROOM)) {
-          const roomName = message.payload.roomName || `Room-${createUniqueId()}`;
-          const room = this.roomManager.createRoom(roomName, client.clientId, message.payload.maxPlayers);
-          this.sendMessage(client, {
-            type: MessageType.ROOM_STATE,
-            requestId: message.requestId,
-            clientId: SERVER_ID,
-            payload: {
-              roomId: room.id,
-              players: room.clients,
-              hostId: room.hostId
-            }
-          });
+          if (!client.deviceId || !client.name) {
+            this.sendErrorMessage(client, "Must send HELLO first");
+            break;
+          }
+          const roomId = createUniqueId("room-");
+          const room = this.roomManager.createRoom(
+            roomId,
+            client.deviceId,
+            client.clientId,
+            client.name
+          );
+
+          logger.info(`Room created: ${room.roomId} by ${client.name}. JoinCode: ${room.joinCode}`);
+          this.broadcastRoomState(room.roomId);
         }
         break;
 
       case MessageType.JOIN_ROOM:
         if (isMessageType<JoinRoomMessage>(message, MessageType.JOIN_ROOM)) {
-          const room = this.roomManager.joinRoom(message.payload.roomId, client.clientId);
-          if (room) {
-            // Notify joiner
-            this.sendMessage(client, {
-              type: MessageType.ROOM_STATE,
-              requestId: message.requestId,
-              clientId: SERVER_ID,
-              payload: {
-                roomId: room.id,
-                players: room.clients,
-                hostId: room.hostId
-              }
-            });
-            // Notify others
-            this.broadcastToRoom(room.id, {
-              type: MessageType.ROOM_STATE,
-              requestId: createUniqueId("update-"),
-              clientId: SERVER_ID,
-              payload: {
-                roomId: room.id,
-                players: room.clients,
-                hostId: room.hostId
-              }
-            });
-          } else {
-            this.sendErrorMessage(client, "Failed to join room (Full or invalid ID)");
+          if (!client.deviceId || !client.name) {
+            this.sendErrorMessage(client, "Must send HELLO first");
+            break;
+          }
+          try {
+            const room = this.roomManager.joinRoomByCode(
+              message.payload.joinCode,
+              client.deviceId,
+              client.clientId,
+              client.name
+            );
+            logger.info(`Client ${client.name} joined room ${room.roomId}`);
+            this.broadcastRoomState(room.roomId);
+          } catch (err: any) {
+            this.sendErrorMessage(client, err.message || "Failed to join room");
           }
         }
         break;
-      
-      case MessageType.HELLO:
-        if (isMessageType<HelloMessage>(message, MessageType.HELLO)) {
-          const { deviceId, clientName } = message.payload;
 
-          // Store deviceId on client
-          client.deviceId = deviceId;
+      case MessageType.CHAT:
+        if (isMessageType<ChatMessage>(message, MessageType.CHAT)) {
+          if (!client.deviceId) {
+            this.sendErrorMessage(client, "Must send HELLO first");
+            break;
+          }
+          const room = this.roomManager.findRoomByDevice(client.deviceId);
+          if (!room) {
+            this.sendErrorMessage(client, "Not in a room");
+            break;
+          }
 
-          logger.info(`Client ${client.clientId} identified as device ${deviceId}`);
+          // Store the chat message
+          const chatMessage = this.roomManager.appendChat(room.roomId, client.deviceId, message.payload.text);
 
-          // Reply with WELCOME
-          this.sendMessage(client, {
-            type: MessageType.WELCOME,
-            requestId: message.requestId,
-            clientId: SERVER_ID,
-            payload: { clientId: client.clientId },
+          // Broadcast the CHAT message to all room members for real-time display
+          this.broadcastToRoom(room.roomId, {
+            type: MessageType.CHAT,
+            requestId: createUniqueId("chat-"),
+            clientId: "server",
+            payload: {
+              fromDeviceId: chatMessage.fromDeviceId,
+              fromName: chatMessage.fromName,
+              text: chatMessage.text,
+              timestamp: chatMessage.timestamp
+            }
           });
+
+          // Also update the room state snapshot
+          this.broadcastRoomState(room.roomId);
+        }
+        break;
+
+      case MessageType.KICK:
+        if (isMessageType<KickMessage>(message, MessageType.KICK)) {
+          if (!client.deviceId) {
+            this.sendErrorMessage(client, "Must send HELLO first");
+            break;
+          }
+          try {
+            const room = this.roomManager.kick(client.deviceId, message.payload.targetDeviceId);
+            this.broadcastRoomState(room.roomId);
+
+            // Optionally notify the kicked client
+            // This is tricky because they might still be connected but not in room members.
+          } catch (err: any) {
+            this.sendErrorMessage(client, err.message || "Failed to kick");
+          }
         }
         break;
 
@@ -150,17 +190,37 @@ export class LanForgeServer {
     }
   }
 
+  // Helper to broadcast full room state (snapshot) to all members
+  private broadcastRoomState(roomId: string) {
+    const snapshot = this.roomManager.makeSnapshot(roomId);
+    if (!snapshot) return;
+
+    const message: NetworkMessage = {
+      type: MessageType.STATE_SNAPSHOT,
+      requestId: createUniqueId("snap-"),
+      clientId: "server",
+      payload: { snapshot }
+    };
+
+    const room = this.roomManager.getRoom(roomId);
+    if (room) {
+      for (const member of room.members) {
+        const client = this.connectedClients.get(member.clientId);
+        if (client) {
+          client.sendMessage(message);
+        }
+      }
+    }
+  }
+
   // Helper to broadcast to a specific room
   private broadcastToRoom(roomId: string, message: NetworkMessage) {
     const room = this.roomManager.getRoom(roomId);
     if (room) {
-      for (const clientId of room.clients) {
-        const client = this.connectedClients.get(clientId);
+      for (const member of room.members) {
+        const client = this.connectedClients.get(member.clientId);
         if (client) {
-          client.sendMessage({
-            ...message,
-            clientId: SERVER_ID, 
-          });
+          client.sendMessage(message);
         }
       }
     }
@@ -185,7 +245,7 @@ export class LanForgeServer {
     this.sendMessage(client, {
       type: MessageType.ERROR,
       requestId: createUniqueId("error-"),
-      clientId: SERVER_ID,
+      clientId: "server",
       payload: { reason },
     });
   }
@@ -200,13 +260,12 @@ export class LanForgeServer {
 
         if (timeSinceLastSeen > CLIENT_TIMEOUT_MS) {
           client.closeConnection("Heartbeat timeout");
-          this.roomManager.removeClient(clientId);
           this.connectedClients.delete(clientId);
         } else {
           client.sendMessage({
             type: MessageType.PING,
             requestId: createUniqueId("ping-"),
-            clientId: SERVER_ID,
+            clientId: "server",
             payload: { timestamp: Date.now() },
           });
         }

@@ -6,16 +6,6 @@ export interface BaseMessage {
     clientId?: string;
 }
 
-export interface HelloMessage extends BaseMessage {
-  type: MessageType.HELLO;
-  payload: { deviceId: string; clientName?: string };
-}
-
-export interface WelcomeMessage extends BaseMessage {
-  type: MessageType.WELCOME;
-  payload: { clientId: string };
-}
-
 // --- Connection Messages ---
 export interface PingMessage extends BaseMessage {
     type: MessageType.PING;
@@ -49,7 +39,7 @@ export interface CreateRoomMessage extends BaseMessage {
 export interface JoinRoomMessage extends BaseMessage {
     type: MessageType.JOIN_ROOM;
     payload: {
-        roomId: string;
+        joinCode: string;
     };
 }
 
@@ -66,6 +56,60 @@ export interface RoomStateMessage extends BaseMessage {
         roomId: string;
         players: string[]; // List of clientIds
         hostId: string;
+    };
+}
+
+// --- New Week 2 Messages ---
+export interface HelloMessage extends BaseMessage {
+    type: MessageType.HELLO;
+    payload: {
+        deviceId: string;
+        name: string;
+    };
+}
+
+export interface WelcomeMessage extends BaseMessage {
+    type: MessageType.WELCOME;
+    payload: {
+        clientId: string;
+    };
+}
+
+export interface ChatMessage extends BaseMessage {
+    type: MessageType.CHAT;
+    payload: {
+        text: string;
+        fromDeviceId?: string; // Optional if server fills it
+        fromName?: string;     // Optional if server fills it
+        timestamp?: number;
+    };
+}
+
+export interface StateSnapshotMessage extends BaseMessage {
+    type: MessageType.STATE_SNAPSHOT;
+    payload: {
+        snapshot: any; // Using any for now, matches SnapshotState
+    };
+}
+
+export interface HostChangedMessage extends BaseMessage {
+    type: MessageType.HOST_CHANGED;
+    payload: {
+        newHostDeviceId: string;
+    };
+}
+
+export interface KickMessage extends BaseMessage {
+    type: MessageType.KICK;
+    payload: {
+        targetDeviceId: string;
+    };
+}
+
+export interface KickedMessage extends BaseMessage {
+    type: MessageType.KICKED;
+    payload: {
+        reason: string;
     };
 }
 
@@ -104,6 +148,11 @@ export type NetworkMessage =
     | JoinRoomMessage
     | LeaveRoomMessage
     | RoomStateMessage
+    | ChatMessage
+    | StateSnapshotMessage
+    | HostChangedMessage
+    | KickMessage
+    | KickedMessage
     | GameStartMessage
     | GameActionMessage
     | GameUpdateMessage;
