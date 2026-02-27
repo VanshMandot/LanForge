@@ -1,17 +1,10 @@
 import { randomBytes } from "crypto";
-import { SnapshotState } from "../states/types";
-
+import { SnapshotState, Member } from "../states/types";
+import { electHost } from "./hostElection";
 /*Types & Interfaces*/
 
 export type Role = "host" | "member";
 
-export interface Member {
-  deviceId: string;      // stable identity
-  clientId: string;      // connection/session identity
-  name: string;          // display name (unique per room)
-  joinOrder: number;     // used for leader election
-  role: Role;
-}
 
 export interface ChatMessage {
   fromDeviceId: string;
@@ -46,7 +39,10 @@ export class RoomManager {
     roomId: string,
     hostDeviceId: string,
     hostClientId: string,
-    hostName: string
+    hostName: string,
+    ramMB: number,
+    cpuCores: number,
+    batteryLevel: number  
   ): Room {
     const joinCode = this.generateJoinCode();
 
@@ -56,6 +52,9 @@ export class RoomManager {
       name: hostName,
       joinOrder: this.globalJoinCounter++,
       role: "host",
+      ramMB,
+      cpuCores,
+      batteryLevel
     };
 
     const room: Room = {
@@ -78,7 +77,10 @@ export class RoomManager {
     joinCode: string,
     deviceId: string,
     clientId: string,
-    name: string
+    name: string,
+    ramMB: number,
+    cpuCores: number,
+    batteryLevel: number
   ): Room {
     const roomId = this.joinCodeToRoomId.get(joinCode);
     if (!roomId) throw new Error("INVALID_JOIN_CODE");
@@ -95,6 +97,9 @@ export class RoomManager {
       name,
       joinOrder: this.globalJoinCounter++,
       role: "member",
+      ramMB,
+      cpuCores,
+      batteryLevel
     };
 
     room.members.push(member);
@@ -184,19 +189,11 @@ export class RoomManager {
   /* Host Election */
 
   electNewHost(roomId: string): string {
-    const room = this.rooms.get(roomId);
-    if (!room) throw new Error("ROOM_NOT_FOUND");
+  const room = this.rooms.get(roomId);
+  if (!room) throw new Error("ROOM_NOT_FOUND");
 
-    const sorted = [...room.members].sort((a, b) => {
-      if (a.joinOrder !== b.joinOrder) {
-        return a.joinOrder - b.joinOrder;
-      }
-      return this.hash(a.deviceId) - this.hash(b.deviceId);
-    });
-
-    return sorted[0].deviceId;
-  }
-
+  return electHost(room.members);
+}
   /* Helpers */
 
   public findRoomByDevice(deviceId: string): Room | null {

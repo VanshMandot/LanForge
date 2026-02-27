@@ -4,6 +4,11 @@ export type Member = {
   name: string
   joinOrder: number
   role: "host" | "member"
+
+  // NEW
+  ramMB?: number
+  cpuCores?: number
+  batteryLevel?: number
 }
 
 export type ChatMessage = {

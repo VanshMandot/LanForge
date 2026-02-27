@@ -105,7 +105,10 @@ export class LanForgeServer {
             roomId,
             client.deviceId,
             client.clientId,
-            client.name
+            client.name,
+            4096,   // ramMB
+            4,      // cpuCores
+            80      // batteryLevel
           );
 
           logger.info(`Room created: ${room.roomId} by ${client.name}. JoinCode: ${room.joinCode}`);
@@ -124,7 +127,10 @@ export class LanForgeServer {
               message.payload.joinCode,
               client.deviceId,
               client.clientId,
-              client.name
+              client.name,
+              2048,   // ramMB
+              2,      // cpuCores
+              60      // batteryLevel
             );
             logger.info(`Client ${client.name} joined room ${room.roomId}`);
             this.broadcastRoomState(room.roomId);
