@@ -117,23 +117,33 @@ export interface KickedMessage extends BaseMessage {
 export interface GameStartMessage extends BaseMessage {
     type: MessageType.GAME_START;
     payload: {
-        gameId: string;
-        initialState: unknown;
+        /** Sent by client (host) to start a game in their room */
+        gameType?: string; // optional: which game to load (future use)
     };
 }
 
 export interface GameActionMessage extends BaseMessage {
     type: MessageType.GAME_ACTION;
     payload: {
-        actionType: string;
-        data: unknown;
+        /** Matches GameAction.type */
+        type: string;
+        /** Arbitrary action data defined by the GameModule */
+        payload: Record<string, unknown>;
+        /** Monotonic counter stamped by the sending peer */
+        sequence: number;
     };
 }
 
 export interface GameUpdateMessage extends BaseMessage {
     type: MessageType.GAME_UPDATE;
     payload: {
-        stateDelta: unknown; // Could be a full state or a diff
+        sessionId: string;
+        roomId: string;
+        hostDeviceId: string;
+        players: Array<{ deviceId: string; name: string }>;
+        /** Full game state after the action */
+        state: unknown;
+        actionSequence: number;
     };
 }
 

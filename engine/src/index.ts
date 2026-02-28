@@ -84,19 +84,47 @@ function setupChatInterface(peer: PeerNode) {
     terminal: false
   });
 
-  logger.info("[Chat] Type a message and press Enter to chat. Type '/kick <deviceId>' to kick.");
+  logger.info("[Chat] Commands:");
+  logger.info("  /kick <deviceId>      - Kick a peer (host only)");
+  logger.info("  /startgame            - Start the game in this room (host only)");
+  logger.info("  /gameaction <type>    - Submit a game action e.g. /gameaction MOVE");
+  logger.info("  <message>             - Send a chat message");
 
   rl.on("line", (line) => {
     if (line.startsWith("/kick ")) {
       const target = line.split(" ")[1];
-      // Note: Kick requires host connection. Host is just another peer connected to the server.
-      // We don't have a public kick method on PeerNode yet, but we can add one or use send.
       (peer as any).send({
         type: "KICK",
         requestId: `kick-${Date.now()}`,
         clientId: (peer as any).connection.clientId,
         payload: { targetDeviceId: target }
       });
+
+    } else if (line.trim() === "/startgame") {
+      // Tell the server to start the game using real room members
+      (peer as any).send({
+        type: "GAME_START",
+        requestId: `gs-${Date.now()}`,
+        clientId: (peer as any).connection.clientId,
+        payload: {}
+      });
+      logger.info("[Game] GAME_START sent");
+
+    } else if (line.startsWith("/gameaction ")) {
+      // Submit a game action, e.g. /gameaction MOVE
+      const actionType = line.slice("/gameaction ".length).trim();
+      (peer as any).send({
+        type: "GAME_ACTION",
+        requestId: `ga-${Date.now()}`,
+        clientId: (peer as any).connection.clientId,
+        payload: {
+          type: actionType,
+          payload: { submittedAt: Date.now() },
+          sequence: Date.now(),
+        }
+      });
+      logger.info(`[Game] GAME_ACTION sent: ${actionType}`);
+
     } else if (line.trim().length > 0) {
       peer.sendChat(line);
     }

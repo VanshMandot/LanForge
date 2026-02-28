@@ -9,10 +9,14 @@ import {
   HelloMessage,
   ChatMessage,
   KickMessage,
+  GameStartMessage,
+  GameActionMessage,
 } from "../network/Protocol";
 import { createUniqueId } from "../utils/id";
 import { logger } from "../utils/logger";
 import { RoomManager } from "./RoomManager";
+import { GameEngine } from "../game/GameEngine";
+import { EchoGame } from "../game/EchoGame";
 
 // Heartbeat config
 const HEARTBEAT_INTERVAL_MS = 5000;
@@ -22,12 +26,40 @@ export class LanForgeServer {
   private websocketServer!: WebSocketServer;
   private roomManager = new RoomManager();
 
+  /**
+   * GameEngine is wired with EchoGame by default.
+   * To use a different game, call server.setGameModule() before start().
+   */
+  private gameEngine = new GameEngine(new EchoGame(), {
+    onStateUpdate: (session) => {
+      // Broadcast GAME_UPDATE to all room members after every state change
+      const gameUpdateMsg: NetworkMessage = {
+        type: MessageType.GAME_UPDATE,
+        requestId: createUniqueId("gu-"),
+        clientId: "server",
+        payload: session.getSnapshot(),
+      };
+      this.broadcastToRoom(session.roomId, gameUpdateMsg);
+    },
+  });
+
   // Stores all connected clients
   private connectedClients = new Map<string, ClientConnection>();
 
   // Start server on given port
   start(port: number) {
     this.websocketServer = new WebSocketServer({ port });
+
+    // Register host-change callback — broadcasts HOST_CHANGED to entire room
+    this.roomManager.onHostChanged = (roomId, newHostDeviceId) => {
+      logger.info(`[Server] Host changed in room ${roomId} → ${newHostDeviceId}`);
+      this.broadcastToRoom(roomId, {
+        type: MessageType.HOST_CHANGED,
+        requestId: createUniqueId("hc-"),
+        clientId: "server",
+        payload: { newHostDeviceId },
+      });
+    };
 
     this.websocketServer.on("connection", (socket) => {
       const clientId = createUniqueId("client-");
@@ -44,6 +76,7 @@ export class LanForgeServer {
         if (client.deviceId) {
           const room = this.roomManager.leaveRoom(client.deviceId);
           if (room) {
+            // HOST_CHANGED is fired via callback above; also sync full state
             this.broadcastRoomState(room.roomId);
           }
         }
@@ -106,9 +139,9 @@ export class LanForgeServer {
             client.deviceId,
             client.clientId,
             client.name,
-            4096,   // ramMB
-            4,      // cpuCores
-            80      // batteryLevel
+            8192,   // ramMB
+            8,      // cpuCores
+            90      // batteryLevel
           );
 
           logger.info(`Room created: ${room.roomId} by ${client.name}. JoinCode: ${room.joinCode}`);
@@ -128,11 +161,13 @@ export class LanForgeServer {
               client.deviceId,
               client.clientId,
               client.name,
-              2048,   // ramMB
+              16384,   // ramMB
               2,      // cpuCores
               60      // batteryLevel
             );
             logger.info(`Client ${client.name} joined room ${room.roomId}`);
+            // Check if new joiner has better hardware and should be promoted
+            this.roomManager.checkAndPromoteHost(room.roomId);
             this.broadcastRoomState(room.roomId);
           } catch (err: any) {
             this.sendErrorMessage(client, err.message || "Failed to join room");
@@ -181,12 +216,76 @@ export class LanForgeServer {
           }
           try {
             const room = this.roomManager.kick(client.deviceId, message.payload.targetDeviceId);
-            this.broadcastRoomState(room.roomId);
 
-            // Optionally notify the kicked client
-            // This is tricky because they might still be connected but not in room members.
+            // Notify the kicked client directly before they lose room access
+            const kickedMember = this.findClientByDeviceId(message.payload.targetDeviceId);
+            if (kickedMember) {
+              kickedMember.sendMessage({
+                type: MessageType.KICKED,
+                requestId: createUniqueId("kicked-"),
+                clientId: "server",
+                payload: { reason: "Kicked by host" },
+              });
+            }
+
+            this.broadcastRoomState(room.roomId);
           } catch (err: any) {
             this.sendErrorMessage(client, err.message || "Failed to kick");
+          }
+        }
+        break;
+
+      case MessageType.GAME_START:
+        if (isMessageType<GameStartMessage>(message, MessageType.GAME_START)) {
+          if (!client.deviceId) {
+            this.sendErrorMessage(client, "Must send HELLO first");
+            break;
+          }
+          const gsRoom = this.roomManager.findRoomByDevice(client.deviceId);
+          if (!gsRoom) {
+            this.sendErrorMessage(client, "Not in a room");
+            break;
+          }
+          if (gsRoom.hostDeviceId !== client.deviceId) {
+            this.sendErrorMessage(client, "NOT_HOST: Only the host can start the game");
+            break;
+          }
+          if (this.gameEngine.isRunning()) {
+            this.sendErrorMessage(client, "GAME_ALREADY_RUNNING");
+            break;
+          }
+          try {
+            this.gameEngine.startGame({
+              roomId: gsRoom.roomId,
+              hostDeviceId: gsRoom.hostDeviceId,
+              players: gsRoom.members.map((m) => ({ deviceId: m.deviceId, name: m.name })),
+            });
+            logger.info(`[Server] Game started in room ${gsRoom.roomId}`);
+          } catch (err: any) {
+            this.sendErrorMessage(client, err.message || "Failed to start game");
+          }
+        }
+        break;
+
+      case MessageType.GAME_ACTION:
+        if (isMessageType<GameActionMessage>(message, MessageType.GAME_ACTION)) {
+          if (!client.deviceId) {
+            this.sendErrorMessage(client, "Must send HELLO first");
+            break;
+          }
+          if (!this.gameEngine.isRunning()) {
+            this.sendErrorMessage(client, "GAME_NOT_RUNNING");
+            break;
+          }
+          try {
+            this.gameEngine.processAction({
+              type: message.payload.type,
+              payload: message.payload.payload,
+              fromDeviceId: client.deviceId,
+              sequence: message.payload.sequence,
+            });
+          } catch (err: any) {
+            this.sendErrorMessage(client, err.message || "Failed to process action");
           }
         }
         break;
@@ -254,6 +353,14 @@ export class LanForgeServer {
       clientId: "server",
       payload: { reason },
     });
+  }
+
+  // Find a connected client by their deviceId
+  private findClientByDeviceId(deviceId: string): ClientConnection | null {
+    for (const client of this.connectedClients.values()) {
+      if (client.deviceId === deviceId) return client;
+    }
+    return null;
   }
 
   // Periodically checks client health

@@ -202,6 +202,18 @@ export class PeerNode {
         this.connection.ws?.close();
         break;
 
+      case MessageType.HOST_CHANGED:
+        const hc = (msg as any).payload;
+        logger.warn(`[PeerNode] 👑 HOST CHANGED → new host: ${hc.newHostDeviceId}`);
+        break;
+
+      case MessageType.GAME_UPDATE:
+        const gu = (msg as any).payload;
+        logger.info(`[GAME] 🎮 State updated (action #${gu.actionSequence}):`);
+        logger.info(`[GAME]   lastAction: ${gu.state?.lastActionType} from ${gu.state?.lastActionFrom}`);
+        logger.info(`[GAME]   totalActions: ${gu.state?.actionCount}`);
+        break;
+
       case MessageType.ROOM_STATE:
         // Legacy or backup support
         break;

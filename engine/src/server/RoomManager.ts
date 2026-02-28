@@ -33,6 +33,9 @@ export class RoomManager {
   private joinCodeToRoomId = new Map<string, string>();
   private globalJoinCounter = 0;
 
+  /** Fired after any host change: on leave, kick, or join-time promotion */
+  public onHostChanged?: (roomId: string, newHostDeviceId: string) => void;
+
   /* Room Creation */
 
   createRoom(
@@ -42,7 +45,7 @@ export class RoomManager {
     hostName: string,
     ramMB: number,
     cpuCores: number,
-    batteryLevel: number  
+    batteryLevel: number
   ): Room {
     const joinCode = this.generateJoinCode();
 
@@ -112,6 +115,7 @@ export class RoomManager {
     const room = this.findRoomByDevice(deviceId);
     if (!room) return null;
 
+    const wasHost = room.hostDeviceId === deviceId;
     room.members = room.members.filter(m => m.deviceId !== deviceId);
 
     if (room.members.length === 0) {
@@ -119,13 +123,14 @@ export class RoomManager {
       return null;
     }
 
-    if (room.hostDeviceId === deviceId) {
+    if (wasHost) {
       const newHostId = this.electNewHost(room.roomId);
       room.hostDeviceId = newHostId;
-
       room.members.forEach(m => {
         m.role = m.deviceId === newHostId ? "host" : "member";
       });
+      // Notify server of host change
+      this.onHostChanged?.(room.roomId, newHostId);
     }
 
     return room;
@@ -143,6 +148,26 @@ export class RoomManager {
 
     room.members = room.members.filter(m => m.deviceId !== targetDeviceId);
     return room;
+  }
+
+  /**
+   * Check if a newly joined member should become host (has better hardware).
+   * Returns the new host deviceId if a promotion happened, null otherwise.
+   */
+  checkAndPromoteHost(roomId: string): string | null {
+    const room = this.rooms.get(roomId);
+    if (!room) return null;
+
+    const elected = electHost(room.members);
+    if (elected !== room.hostDeviceId) {
+      room.hostDeviceId = elected;
+      room.members.forEach(m => {
+        m.role = m.deviceId === elected ? "host" : "member";
+      });
+      this.onHostChanged?.(roomId, elected);
+      return elected;
+    }
+    return null;
   }
 
   /* Name Change (Strict) */
@@ -189,11 +214,11 @@ export class RoomManager {
   /* Host Election */
 
   electNewHost(roomId: string): string {
-  const room = this.rooms.get(roomId);
-  if (!room) throw new Error("ROOM_NOT_FOUND");
+    const room = this.rooms.get(roomId);
+    if (!room) throw new Error("ROOM_NOT_FOUND");
 
-  return electHost(room.members);
-}
+    return electHost(room.members);
+  }
   /* Helpers */
 
   public findRoomByDevice(deviceId: string): Room | null {
