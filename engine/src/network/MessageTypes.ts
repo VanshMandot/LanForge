@@ -23,4 +23,5 @@ export enum MessageType {
     GAME_START = "GAME_START",
     GAME_ACTION = "GAME_ACTION",
     GAME_UPDATE = "GAME_UPDATE",
+    GAME_ENDED = "GAME_ENDED",
 }

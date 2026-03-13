@@ -147,6 +147,18 @@ export interface GameUpdateMessage extends BaseMessage {
     };
 }
 
+export interface GameEndedMessage extends BaseMessage {
+  type: MessageType.GAME_ENDED;
+  payload: {
+    sessionId: string;
+    roomId: string;
+    hostDeviceId: string;
+    players: Array<{ deviceId: string; name: string }>;
+    state: unknown;
+    actionSequence: number;
+  };
+}
+
 export type NetworkMessage =
     | HelloMessage
     | WelcomeMessage
@@ -165,4 +177,5 @@ export type NetworkMessage =
     | KickedMessage
     | GameStartMessage
     | GameActionMessage
-    | GameUpdateMessage;
+    | GameUpdateMessage
+    | GameEndedMessage;

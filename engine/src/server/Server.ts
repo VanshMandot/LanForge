@@ -16,7 +16,7 @@ import { createUniqueId } from "../utils/id";
 import { logger } from "../utils/logger";
 import { RoomManager } from "./RoomManager";
 import { GameEngine } from "../game/GameEngine";
-import { EchoGame } from "../game/EchoGame";
+import { TicTacToeGame, TicTacToeState } from "../game/modules/TicTacToeGame";
 
 // Heartbeat config
 const HEARTBEAT_INTERVAL_MS = 5000;
@@ -26,22 +26,35 @@ export class LanForgeServer {
   private websocketServer!: WebSocketServer;
   private roomManager = new RoomManager();
 
-  /**
-   * GameEngine is wired with EchoGame by default.
-   * To use a different game, call server.setGameModule() before start().
-   */
-  private gameEngine = new GameEngine(new EchoGame(), {
-    onStateUpdate: (session) => {
-      // Broadcast GAME_UPDATE to all room members after every state change
-      const gameUpdateMsg: NetworkMessage = {
-        type: MessageType.GAME_UPDATE,
-        requestId: createUniqueId("gu-"),
-        clientId: "server",
-        payload: session.getSnapshot(),
-      };
-      this.broadcastToRoom(session.roomId, gameUpdateMsg);
-    },
-  });
+/**
+ * Single GameEngine instance for Week 3.
+ * Uses TicTacToeGame (turn-based, 2 active players + spectators).
+ */
+private gameEngine = new GameEngine<TicTacToeState>(new TicTacToeGame(), {
+  // After every valid action, broadcast GAME_UPDATE with full session snapshot.
+  onStateUpdate: (session) => {
+    const snapshot = session.getSnapshot();
+    const gameUpdateMsg: NetworkMessage = {
+      type: MessageType.GAME_UPDATE,
+      requestId: createUniqueId("gu-"),
+      clientId: "server",
+      payload: snapshot,
+    };
+    this.broadcastToRoom(session.roomId, gameUpdateMsg);
+  },
+  // When the game ends, broadcast GAME_ENDED once.
+  onGameEnd: (session) => {
+    const snapshot = session.getSnapshot();
+    const endMsg: NetworkMessage = {
+      type: MessageType.GAME_ENDED,
+      requestId: createUniqueId("ge-"),
+      clientId: "server",
+      payload: snapshot,
+    };
+    this.broadcastToRoom(session.roomId, endMsg);
+  },
+});
+
 
   // Stores all connected clients
   private connectedClients = new Map<string, ClientConnection>();
@@ -61,14 +74,14 @@ export class LanForgeServer {
       });
     };
 
-    this.websocketServer.on("connection", (socket) => {
+    this.websocketServer.on("connection", (socket: WebSocket) => {
       const clientId = createUniqueId("client-");
       const client = new ClientConnection(clientId, socket);
 
       this.connectedClients.set(clientId, client);
       logger.info(`Client connected: ${clientId}`);
 
-      socket.on("message", (data) => {
+      socket.on("message", (data: WebSocket.RawData) => {
         this.handleIncomingMessage(client, data.toString());
       });
 
@@ -255,6 +268,8 @@ export class LanForgeServer {
             break;
           }
           try {
+            // Host starts a new Tic-Tac-Toe session for this room.
+            // All room.members become players; game module decides active vs spectators.
             this.gameEngine.startGame({
               roomId: gsRoom.roomId,
               hostDeviceId: gsRoom.hostDeviceId,
@@ -278,6 +293,8 @@ export class LanForgeServer {
             break;
           }
           try {
+            // For TicTacToe we expect payload.type = "MOVE" and payload.payload = { index: 0..8 }.
+            // GameEngine enforces host-only; TicTacToeGame enforces active player + turn rules.
             this.gameEngine.processAction({
               type: message.payload.type,
               payload: message.payload.payload,
